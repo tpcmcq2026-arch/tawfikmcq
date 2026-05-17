@@ -1,0 +1,1735 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>TPC — পরীক্ষার অ্যাপ</title>
+<link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@300;400;500;600;700&family=Noto+Serif+Bengali:wght@400;600;700&family=Noto+Sans+Bengali:wght@400;600;700;900&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+<!-- Firebase -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getFirestore, collection, getDocs, query, where, orderBy, onSnapshot, addDoc, doc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyC7urxihovMbHnWo3m6OlWbQyp6B1NLbAg",
+    authDomain: "tpc-exam.firebaseapp.com",
+    databaseURL: "https://tpc-exam-default-rtdb.firebaseio.com",
+    projectId: "tpc-exam",
+    storageBucket: "tpc-exam.firebasestorage.app",
+    messagingSenderId: "491384593265",
+    appId: "1:491384593265:web:293112ff515f49169c34d0",
+    measurementId: "G-P2XDLVP9GW"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  // ছাত্র যাচাই
+  window.fbVerifyStudent = async function(name, password) {
+    try {
+      const snap = await getDocs(query(collection(db,"students"), where("name","==",name), where("password","==",password)));
+      if(snap.empty) return null;
+      return { _id: snap.docs[0].id, ...snap.docs[0].data() };
+    } catch(e) { console.error(e); return undefined; }
+  };
+
+  // সক্রিয় পরীক্ষার লিংক আনো (teacher সেট করে)
+  window.fbGetActiveExam = async function() {
+    try {
+      const snap = await getDocs(collection(db,"activeExam"));
+      if(snap.empty) return null;
+      return snap.docs[0].data();
+    } catch(e) { return null; }
+  };
+
+  // realtime active exam listener
+  window.fbListenActiveExam = function(callback) {
+    return onSnapshot(collection(db,"activeExam"), snap => {
+      if(snap.empty) callback(null);
+      else callback(snap.docs[0].data());
+    });
+  };
+
+  // ছাত্র ইতিমধ্যে জমা দিয়েছে কিনা চেক
+  window.fbCheckSubmitted = async function(studentDocId, examLinkId) {
+    try {
+      const snap = await getDocs(query(collection(db,"students"), where("__name__","==",studentDocId)));
+      if(snap.empty) return false;
+      const submitted = snap.docs[0].data().submittedExams || [];
+      return submitted.includes(String(examLinkId));
+    } catch(e) { return false; }
+  };
+
+  // ছাত্রের result history
+  window.fbGetMyHistory = async function(studentName) {
+    try {
+      const snap = await getDocs(query(collection(db,"results"), where("studentName","==",studentName)));
+      return snap.docs.map(d=>({_id:d.id,...d.data()}))
+        .sort((a,b)=>(b.savedAt?.seconds||0)-(a.savedAt?.seconds||0));
+    } catch(e) { return []; }
+  };
+
+  // নোটিশ আনো
+  window.fbGetActiveNotices = async function() {
+    try {
+      const now = Date.now();
+      const snap = await getDocs(collection(db,"notices"));
+      return snap.docs.map(d=>({_id:d.id,...d.data()}))
+        .filter(n=>{
+          if(n.expiryDate && new Date(n.expiryDate).getTime()<now) return false;
+          return true;
+        })
+        .sort((a,b)=>{
+          if((b.pinned?1:0)!==(a.pinned?1:0)) return (b.pinned?1:0)-(a.pinned?1:0);
+          return (b.createdAt?.seconds||0)-(a.createdAt?.seconds||0);
+        });
+    } catch(e) { return []; }
+  };
+
+  // marquee settings
+  window.fbGetMarquee = async function() {
+    try {
+      const snap = await getDocs(collection(db,"marqueeSettings"));
+      if(!snap.empty) return snap.docs[0].data();
+      return null;
+    } catch(e) { return null; }
+  };
+
+  // ছাত্রের বার্তা পাঠাও
+  window.fbSendMessage = async function(msgObj) {
+    try {
+      await addDoc(collection(db,"messages"), {...msgObj, sentAt:serverTimestamp(), read:false});
+      return true;
+    } catch(e) { return false; }
+  };
+
+  window._fbReady = true;
+  window.dispatchEvent(new Event('fbReady'));
+  console.log("✅ TPC Student App — Firebase সংযুক্ত");
+</script>
+
+<style>
+:root {
+  --bg: #060d1a;
+  --surface: #0e1726;
+  --surface2: #162035;
+  --surface3: #1c2a44;
+  --border: rgba(255,255,255,0.08);
+  --border2: rgba(255,255,255,0.12);
+  --accent: #1d8cf8;
+  --accent2: #f5a623;
+  --accent3: #2dce89;
+  --danger: #f5365c;
+  --text: #e8edf5;
+  --text-muted: #8899b4;
+  --gold: #f7c06a;
+  --glow: rgba(29,140,248,0.25);
+  --glow-gold: rgba(245,166,35,0.2);
+  --radius: 16px;
+  --radius-sm: 10px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'Hind Siliguri', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Animated BG */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 60% 40% at 20% 10%, rgba(29,140,248,0.07) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 30% at 80% 85%, rgba(245,166,35,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 50% at 50% 50%, rgba(45,206,137,0.03) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.container {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 0 0 80px;
+  position: relative;
+  z-index: 1;
+}
+
+/* ===== HEADER ===== */
+.site-header {
+  text-align: center;
+  padding: 28px 20px 20px;
+  background: linear-gradient(180deg, rgba(29,140,248,0.06) 0%, transparent 100%);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
+  position: relative;
+}
+.site-logo {
+  font-family: 'Noto Serif Bengali', serif;
+  font-size: 1.9rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #f5a623, #f7c06a, #f5a623);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  line-height: 1.2;
+  margin-bottom: 6px;
+}
+.site-address {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+  font-family: 'Noto Sans Bengali', sans-serif;
+}
+.site-teacher {
+  font-size: 0.82rem;
+  color: var(--accent2);
+  margin-top: 4px;
+  font-weight: 500;
+  font-family: 'Noto Sans Bengali', sans-serif;
+}
+.site-divider {
+  width: 60px; height: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--gold));
+  border-radius: 4px;
+  margin: 12px auto 0;
+}
+
+/* Marquee */
+.marquee-bar {
+  background: rgba(29,140,248,0.08);
+  border-bottom: 1px solid rgba(29,140,248,0.15);
+  padding: 7px 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  gap: 0;
+}
+.mq-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--accent);
+  white-space: nowrap;
+  border-right: 1px solid rgba(29,140,248,0.2);
+  min-width: 70px;
+}
+.mq-dot {
+  width: 7px; height: 7px;
+  background: var(--accent);
+  border-radius: 50%;
+  animation: pulse 1.4s infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.8)} }
+.mq-track { flex: 1; overflow: hidden; }
+.mq-inner { display: inline-block; white-space: nowrap; animation: marquee 25s linear infinite; }
+.mq-inner:hover { animation-play-state: paused; }
+@keyframes marquee { from{transform:translateX(100vw)} to{transform:translateX(-100%)} }
+.mq-text { font-size: 0.78rem; color: var(--text-muted); padding: 0 20px; }
+
+/* ===== PAGES ===== */
+.page { display: none; padding: 20px 16px; animation: fadeIn 0.35s ease; }
+.page.active { display: block; }
+@keyframes fadeIn { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+
+/* ===== BOTTOM NAV ===== */
+.bottom-nav {
+  position: fixed;
+  bottom: 0; left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 480px;
+  background: var(--surface);
+  border-top: 1px solid var(--border2);
+  display: none;
+  gap: 0;
+  z-index: 100;
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.bottom-nav.visible { display: flex; }
+.nav-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 10px 4px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.62rem;
+  font-family: 'Hind Siliguri', sans-serif;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s;
+  position: relative;
+}
+.nav-btn .nav-icon { font-size: 1.4rem; line-height: 1; }
+.nav-btn.active { color: var(--accent); }
+.nav-btn.active::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 20%; right: 20%;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 0 0 4px 4px;
+}
+
+/* ===== CARDS ===== */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.card-glow {
+  box-shadow: 0 0 30px var(--glow);
+  border-color: rgba(29,140,248,0.25);
+}
+
+/* ===== HOME SCREEN ===== */
+.home-greeting {
+  text-align: center;
+  padding: 24px 0 16px;
+}
+.greeting-time {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-family: 'Roboto Mono', monospace;
+  margin-bottom: 6px;
+}
+.greeting-name {
+  font-family: 'Noto Serif Bengali', serif;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.greeting-sub {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+/* Exam Status Card */
+.exam-status-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.exam-status-header {
+  padding: 14px 20px 12px;
+  background: rgba(29,140,248,0.06);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.status-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: #666;
+  flex-shrink: 0;
+}
+.status-dot.active { background: var(--accent3); box-shadow: 0 0 8px var(--accent3); animation: pulse 1.4s infinite; }
+.status-dot.waiting { background: var(--accent2); box-shadow: 0 0 8px var(--accent2); animation: pulse 2s infinite; }
+.status-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-family: 'Noto Sans Bengali', sans-serif;
+}
+.exam-status-body { padding: 20px; text-align: center; }
+
+/* No Exam State */
+.no-exam-icon { font-size: 3.5rem; margin-bottom: 12px; opacity: 0.7; }
+.no-exam-title {
+  font-family: 'Noto Serif Bengali', serif;
+  font-size: 1.1rem;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.no-exam-sub { font-size: 0.82rem; color: var(--text-muted); opacity: 0.7; }
+
+/* Exam Available State */
+.exam-badge {
+  display: inline-block;
+  background: rgba(45,206,137,0.12);
+  border: 1px solid rgba(45,206,137,0.3);
+  color: var(--accent3);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 20px;
+  margin-bottom: 12px;
+  letter-spacing: 0.5px;
+  animation: pulse 2s infinite;
+}
+.exam-title {
+  font-family: 'Noto Serif Bengali', serif;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+.exam-meta {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.exam-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-family: 'Noto Sans Bengali', sans-serif;
+}
+.exam-meta-item strong { color: var(--text); }
+
+/* Glowing Exam Button */
+.btn-exam {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 18px 24px;
+  background: linear-gradient(135deg, #1d8cf8, #0056c7);
+  border: none;
+  border-radius: 14px;
+  color: white;
+  font-family: 'Noto Sans Bengali', sans-serif;
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(29,140,248,0.4);
+  animation: examBtnGlow 2.5s ease-in-out infinite;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+@keyframes examBtnGlow {
+  0%,100%{box-shadow:0 8px 32px rgba(29,140,248,0.4)}
+  50%{box-shadow:0 8px 48px rgba(29,140,248,0.7),0 0 80px rgba(29,140,248,0.2)}
+}
+.btn-exam:active { transform: scale(0.97); }
+.btn-exam::before {
+  content:'';
+  position:absolute;
+  inset:0;
+  background:linear-gradient(135deg,rgba(255,255,255,0.15),transparent);
+  border-radius:inherit;
+}
+.btn-exam-icon { font-size: 1.5rem; }
+.btn-exam-shimmer {
+  position: absolute;
+  top: 0; left: -100%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+  animation: shimmer 2.5s ease-in-out infinite;
+}
+@keyframes shimmer { 0%{left:-100%} 100%{left:200%} }
+
+/* ===== LOGIN SCREEN ===== */
+.login-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 32px 24px;
+  margin: 20px 0;
+}
+.login-icon {
+  text-align: center;
+  font-size: 3rem;
+  margin-bottom: 12px;
+}
+.login-title {
+  font-family: 'Noto Serif Bengali', serif;
+  font-size: 1.3rem;
+  font-weight: 700;
+  text-align: center;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.login-sub {
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 28px;
+  font-family: 'Noto Sans Bengali', sans-serif;
+}
+.form-group { margin-bottom: 16px; }
+.form-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  font-family: 'Noto Sans Bengali', sans-serif;
+}
+.form-input {
+  width: 100%;
+  padding: 14px 16px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: 'Hind Siliguri', sans-serif;
+  font-size: 1rem;
+  transition: border-color 0.25s, box-shadow 0.25s;
+  outline: none;
+  -webkit-appearance: none;
+}
+.form-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(29,140,248,0.15);
+}
+.form-input::placeholder { color: var(--text-muted); opacity: 0.6; }
+
+/* Buttons */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 20px;
+  border-radius: var(--radius-sm);
+  border: none;
+  font-family: 'Noto Sans Bengali', sans-serif;
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: 100%;
+}
+.btn:active { transform: scale(0.97); }
+.btn-primary { background: linear-gradient(135deg, var(--accent), #0056c7); color: white; box-shadow: 0 4px 16px rgba(29,140,248,0.3); }
+.btn-success { background: linear-gradient(135deg, #2dce89, #1fa866); color: white; box-shadow: 0 4px 16px rgba(45,206,137,0.3); }
+.btn-outline { background: transparent; border: 1px solid var(--border2); color: var(--text-muted); }
+.btn-sm { padding: 10px 16px; font-size: 0.85rem; }
+.btn-danger { background: rgba(245,54,92,0.15); border: 1px solid rgba(245,54,92,0.3); color: var(--danger); }
+
+/* Error/Success Messages */
+.msg {
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-family: 'Noto Sans Bengali', sans-serif;
+  margin-top: 12px;
+  display: none;
+}
+.msg.error { background: rgba(245,54,92,0.1); border: 1px solid rgba(245,54,92,0.3); color: #f87171; }
+.msg.success { background: rgba(45,206,137,0.1); border: 1px solid rgba(45,206,137,0.3); color: var(--accent3); }
+.msg.info { background: rgba(29,140,248,0.1); border: 1px solid rgba(29,140,248,0.25); color: var(--accent); }
+.msg.show { display: block; }
+
+/* ===== RULES SCREEN ===== */
+.rules-header {
+  text-align: center;
+  padding: 20px 0 16px;
+}
+.rules-badge {
+  display: inline-block;
+  background: rgba(245,166,35,0.12);
+  border: 1px solid rgba(245,166,35,0.3);
+  color: var(--accent2);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 4px 14px;
+  border-radius: 20px;
+  margin-bottom: 10px;
+  letter-spacing: 0.5px;
+  font-family: 'Roboto Mono', monospace;
+}
+.rules-title {
+  font-family: 'Noto Serif Bengali', serif;
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.rules-subtitle {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-family: 'Noto Sans Bengali', sans-serif;
+}
+
+.rules-info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.info-chip {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  text-align: center;
+}
+.info-chip-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  font-family: 'Noto Sans Bengali', sans-serif;
+}
+.info-chip-value {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--accent2);
+  font-family: 'Noto Sans Bengali', sans-serif;
+}
+
+.rules-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.rule-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+  color: var(--text);
+  line-height: 1.5;
+  font-family: 'Noto Sans Bengali', sans-serif;
+}
+.rule-num {
+  min-width: 26px; height: 26px;
+  background: linear-gradient(135deg, var(--accent), #0056c7);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: white;
+  font-family: 'Roboto Mono', monospace;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.student-badge-card {
+  background: linear-gradient(135deg, var(--surface2), var(--surface3));
+  border: 1px solid rgba(245,166,35,0.2);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.student-avatar {
+  width: 50px; height: 50px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), #0056c7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+.student-info-name {
+  font-family: 'Noto Sans Bengali', sans-serif;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+.student-info-class {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-family: 'Noto Sans Bengali', sans-serif;
+}
+
+/* ===== PROFILE PAGE ===== */
+.profile-hero {
+  text-align: center;
+  padding: 24px 0 20px;
+}
+.profile-avatar-big {
+  width: 88px; height: 88px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), #0056c7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.5rem;
+  margin: 0 auto 14px;
+  border: 3px solid rgba(29,140,248,0.3);
+  box-shadow: 0 0 24px rgba(29,140,248,0.25);
+}
+.profile-name {
+  font-family: 'Noto Serif Bengali', serif;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.profile-class {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-family: 'Noto Sans Bengali', sans-serif;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.stat-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 10px;
+  text-align: center;
+}
+.stat-value {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.stat-label {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-family: 'Noto Sans Bengali', sans-serif;
+}
+
+.section-title {
+  font-family: 'Noto Serif Bengali', serif;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--accent2);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* History List */
+.history-item {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.history-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+.history-info { flex: 1; min-width: 0; }
+.history-exam-name {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+  font-family: 'Noto Sans Bengali', sans-serif;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 3px;
+}
+.history-date {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-family: 'Roboto Mono', monospace;
+}
+.history-score {
+  text-align: right;
+  flex-shrink: 0;
+}
+.history-pct {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+.pct-good { color: var(--accent3); }
+.pct-mid { color: var(--accent2); }
+.pct-bad { color: var(--danger); }
+.history-grade {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-family: 'Noto Sans Bengali', sans-serif;
+}
+
+/* ===== NOTICE PAGE ===== */
+.notice-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 12px;
+  position: relative;
+  overflow: hidden;
+}
+.notice-card.pinned {
+  border-color: rgba(245,166,35,0.3);
+  background: rgba(245,166,35,0.04);
+}
+.notice-card.pinned::before {
+  content: '📌';
+  position: absolute;
+  top: 10px; right: 12px;
+  font-size: 0.9rem;
+}
+.notice-date {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-family: 'Roboto Mono', monospace;
+  margin-bottom: 6px;
+}
+.notice-text {
+  font-size: 0.9rem;
+  color: var(--text);
+  line-height: 1.6;
+  font-family: 'Noto Sans Bengali', sans-serif;
+}
+
+/* ===== MESSAGE BOX ===== */
+.msg-input-area {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  width: 100%;
+  color: var(--text);
+  font-family: 'Hind Siliguri', sans-serif;
+  font-size: 0.92rem;
+  resize: none;
+  outline: none;
+  min-height: 80px;
+  transition: border-color 0.25s;
+}
+.msg-input-area:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(29,140,248,0.1);
+}
+
+/* Loading Spinner */
+.spinner {
+  width: 36px; height: 36px;
+  border: 3px solid var(--border2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 20px auto;
+}
+@keyframes spin { to{transform:rotate(360deg)} }
+
+/* Toast */
+#toastEl {
+  position: fixed;
+  bottom: 90px; left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  padding: 12px 20px;
+  border-radius: 40px;
+  font-size: 0.85rem;
+  font-family: 'Noto Sans Bengali', sans-serif;
+  z-index: 999;
+  opacity: 0;
+  transition: all 0.35s;
+  max-width: calc(100% - 40px);
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
+#toastEl.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* Loading overlay */
+#loadingOverlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+.loading-logo {
+  font-family: 'Noto Serif Bengali', serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #f5a623, #f7c06a);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.loading-text {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-family: 'Noto Sans Bengali', sans-serif;
+}
+
+/* Divider */
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 16px 0;
+}
+
+/* Badge pill */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-family: 'Roboto Mono', monospace;
+}
+.pill-blue { background: rgba(29,140,248,0.12); color: var(--accent); border: 1px solid rgba(29,140,248,0.2); }
+.pill-green { background: rgba(45,206,137,0.12); color: var(--accent3); border: 1px solid rgba(45,206,137,0.2); }
+.pill-gold { background: rgba(245,166,35,0.12); color: var(--accent2); border: 1px solid rgba(245,166,35,0.2); }
+
+/* Iframe wrapper for exam */
+.exam-frame-wrapper {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: var(--bg);
+  display: none;
+  flex-direction: column;
+}
+.exam-frame-wrapper.open { display: flex; }
+.exam-frame-topbar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.exam-frame-title {
+  font-family: 'Noto Sans Bengali', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 700;
+  flex: 1;
+  color: var(--text);
+}
+.btn-close-exam {
+  background: rgba(245,54,92,0.12);
+  border: 1px solid rgba(245,54,92,0.25);
+  color: var(--danger);
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: 'Hind Siliguri', sans-serif;
+  flex-shrink: 0;
+}
+.exam-frame-wrapper iframe {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: var(--bg);
+}
+
+/* Countdown until exam */
+.countdown-box {
+  background: linear-gradient(135deg, rgba(245,166,35,0.08), rgba(245,166,35,0.04));
+  border: 1px solid rgba(245,166,35,0.2);
+  border-radius: var(--radius);
+  padding: 20px;
+  text-align: center;
+  margin-bottom: 16px;
+}
+.countdown-label {
+  font-size: 0.78rem;
+  color: var(--accent2);
+  font-family: 'Noto Sans Bengali', sans-serif;
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+.countdown-timer {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--accent2);
+  letter-spacing: 2px;
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-muted);
+}
+.empty-icon { font-size: 3rem; margin-bottom: 12px; opacity: 0.5; }
+.empty-text { font-size: 0.9rem; font-family: 'Noto Sans Bengali', sans-serif; }
+
+/* Responsive tweaks */
+@media (max-width: 380px) {
+  .site-logo { font-size: 1.6rem; }
+  .exam-title { font-size: 1.1rem; }
+  .countdown-timer { font-size: 1.6rem; }
+}
+</style>
+</head>
+<body>
+
+<!-- Loading Overlay -->
+<div id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="loading-logo">তৌফিক প্রাইভেট সেন্টার</div>
+  <div class="loading-text">সংযুক্ত হচ্ছে...</div>
+</div>
+
+<!-- Toast -->
+<div id="toastEl"></div>
+
+<!-- Exam Frame (full screen iframe) -->
+<div class="exam-frame-wrapper" id="examFrameWrapper">
+  <div class="exam-frame-topbar">
+    <div class="exam-frame-title" id="examFrameTitle">পরীক্ষা চলছে...</div>
+    <button class="btn-close-exam" onclick="closeExamFrame()">✕ বন্ধ করুন</button>
+  </div>
+  <iframe id="examIframe" src="" allowfullscreen></iframe>
+</div>
+
+<div class="container">
+
+  <!-- HEADER -->
+  <div class="site-header">
+    <div class="site-logo">তৌফিক প্রাইভেট সেন্টার</div>
+    <div class="site-address">সাহেবনগর (হাজ্বী মার্কেট), গাংনী, মেহেরপুর</div>
+    <div class="site-address" style="font-size:0.78rem;margin-top:3px;">স্থাপিত: ২০২৩ খ্রী. &nbsp;|&nbsp; শিক্ষার্থী পোর্টাল</div>
+    <div class="site-teacher">মো: হাসানুজ্জামান তৌফিক &nbsp;|&nbsp; 📞 <a href="tel:+8801626688856" style="color:var(--accent2);text-decoration:none;font-family:'Roboto Mono',monospace;letter-spacing:0.5px;font-weight:700;font-size:0.88rem;">01626688856</a></div>
+    <div class="site-divider"></div>
+  </div>
+
+  <!-- Marquee (hidden by default) -->
+  <div class="marquee-bar" id="marqueeBar" style="display:none;">
+    <div class="mq-label"><span class="mq-dot"></span>নোটিশ</div>
+    <div class="mq-track">
+      <div class="mq-inner">
+        <span class="mq-text" id="marqueeText"></span>
+        <span class="mq-text" id="marqueeText2" aria-hidden="true"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======= PAGE: HOME ======= -->
+  <div id="pageHome" class="page active">
+    <div class="home-greeting">
+      <div class="greeting-time" id="greetingTime"></div>
+      <div class="greeting-name" id="greetingName">স্বাগতম! 👋</div>
+      <div class="greeting-sub" id="greetingSub">পরীক্ষার আপডেট দেখুন নিচে</div>
+    </div>
+
+    <!-- Exam Status Card -->
+    <div class="exam-status-card" id="examStatusCard">
+      <div class="exam-status-header">
+        <div class="status-dot" id="statusDot"></div>
+        <div class="status-label" id="statusLabel">পরীক্ষার অবস্থা যাচাই করা হচ্ছে...</div>
+      </div>
+      <div class="exam-status-body" id="examStatusBody">
+        <div class="spinner"></div>
+      </div>
+    </div>
+
+    <!-- Quick Actions (logged in only) -->
+    <div id="quickActions" style="display:none;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+        <button class="btn btn-outline btn-sm" onclick="goNav('pageNotice')">
+          🔔 নোটিশ
+        </button>
+        <button class="btn btn-outline btn-sm" onclick="goNav('pageMsg')">
+          ✉️ বার্তা পাঠাও
+        </button>
+      </div>
+    </div>
+
+    <!-- Login prompt (not logged in) -->
+    <div id="loginPrompt" style="display:none;">
+      <div class="card" style="text-align:center;padding:24px;">
+        <div style="font-size:2rem;margin-bottom:10px;">🔐</div>
+        <div style="font-family:'Noto Sans Bengali',sans-serif;font-size:0.92rem;color:var(--text-muted);margin-bottom:16px;">পরীক্ষা দিতে বা ফলাফল দেখতে লগইন করুন</div>
+        <button class="btn btn-primary" onclick="goNav('pageLogin')">লগইন করুন →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======= PAGE: LOGIN ======= -->
+  <div id="pageLogin" class="page">
+    <div class="login-card">
+      <div class="login-icon">🎓</div>
+      <div class="login-title">শিক্ষার্থী লগইন</div>
+      <div class="login-sub">তোমার নাম ও পাসওয়ার্ড দিয়ে প্রবেশ করো</div>
+
+      <div class="form-group">
+        <label class="form-label">📋 শিক্ষার্থীর নাম</label>
+        <input type="text" id="loginName" class="form-input" placeholder="তোমার পুরো নাম লিখো" autocomplete="name" autocorrect="off">
+      </div>
+      <div class="form-group">
+        <label class="form-label">🔑 পাসওয়ার্ড</label>
+        <div style="position:relative;">
+          <input type="password" id="loginPass" class="form-input" placeholder="পাসওয়ার্ড লিখো" autocomplete="current-password" id="loginPassInput" style="padding-right:50px;" onkeydown="if(event.key==='Enter')doLogin()">
+          <button onclick="togglePassVis()" style="position:absolute;right:14px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:1.1rem;" id="passEyeBtn">👁️</button>
+        </div>
+      </div>
+
+      <div class="msg" id="loginMsg"></div>
+      <div style="height:16px;"></div>
+
+      <button class="btn btn-primary" id="loginBtn" onclick="doLogin()">
+        <span>🔓 প্রবেশ করুন</span>
+      </button>
+    </div>
+
+    <div style="text-align:center;font-size:0.78rem;color:var(--text-muted);margin-top:12px;font-family:'Noto Sans Bengali',sans-serif;">
+      পাসওয়ার্ড ভুলে গেলে শিক্ষকের সাথে যোগাযোগ করো
+    </div>
+  </div>
+
+  <!-- ======= PAGE: RULES ======= -->
+  <div id="pageRules" class="page">
+    <div class="rules-header">
+      <div class="rules-badge" id="rulesBadge">পরীক্ষা</div>
+      <div class="rules-title" id="rulesExamTitle">পরীক্ষার নিয়মকানুন</div>
+      <div class="rules-subtitle" id="rulesExamSub">শুরু করার আগে মনোযোগ দিয়ে পড়ো</div>
+    </div>
+
+    <!-- Student badge -->
+    <div class="student-badge-card" id="ruleStudentBadge">
+      <div class="student-avatar">👤</div>
+      <div>
+        <div class="student-info-name" id="ruleStudentName">—</div>
+        <div class="student-info-class">শিক্ষার্থী &nbsp;|&nbsp; তৌফিক প্রাইভেট সেন্টার</div>
+      </div>
+    </div>
+
+    <!-- Exam Info Grid -->
+    <div class="rules-info-grid" id="rulesInfoGrid">
+      <div class="info-chip">
+        <div class="info-chip-label">মোট প্রশ্ন</div>
+        <div class="info-chip-value" id="ruleQCount">—</div>
+      </div>
+      <div class="info-chip">
+        <div class="info-chip-label">মোট নম্বর</div>
+        <div class="info-chip-value" id="ruleMarks">—</div>
+      </div>
+      <div class="info-chip">
+        <div class="info-chip-label">সময়</div>
+        <div class="info-chip-value" id="ruleTime">—</div>
+      </div>
+      <div class="info-chip">
+        <div class="info-chip-label">পাস নম্বর</div>
+        <div class="info-chip-value" id="rulePass">—</div>
+      </div>
+    </div>
+
+    <!-- Rules List -->
+    <div class="card" style="margin-bottom:16px;">
+      <div class="section-title">📋 নিয়মসমূহ</div>
+      <ul class="rules-list">
+        <li class="rule-item"><div class="rule-num">১</div><div>একটি প্রশ্নের উত্তর মাত্র একবার দেওয়া যাবে। পরে পরিবর্তন করা যাবে না।</div></li>
+        <li class="rule-item"><div class="rule-num">২</div><div>পরীক্ষা চলাকালীন অন্য ট্যাব বা অ্যাপে যাওয়া যাবে না।</div></li>
+        <li class="rule-item"><div class="rule-num">৩</div><div>নির্ধারিত সময়ের মধ্যে সব প্রশ্নের উত্তর দিতে হবে।</div></li>
+        <li class="rule-item"><div class="rule-num">৪</div><div>একই পরীক্ষা দ্বিতীয়বার দেওয়া যাবে না।</div></li>
+        <li class="rule-item"><div class="rule-num">৫</div><div>পরীক্ষা শেষে ফলাফল WhatsApp গ্রুপে শেয়ার করতে হবে।</div></li>
+      </ul>
+    </div>
+
+    <button class="btn btn-exam" id="startExamBtn" onclick="startExam()">
+      <div class="btn-exam-shimmer"></div>
+      <span class="btn-exam-icon">🎯</span>
+      <span>পরীক্ষা শুরু করুন</span>
+    </button>
+
+    <div style="height:8px;"></div>
+    <button class="btn btn-outline" onclick="goNav('pageHome')" style="margin-top:8px;">← ফিরে যাও</button>
+  </div>
+
+  <!-- ======= PAGE: PROFILE ======= -->
+  <div id="pageProfile" class="page">
+    <div class="profile-hero">
+      <div class="profile-avatar-big" id="profileAvatar">👤</div>
+      <div class="profile-name" id="profileName">—</div>
+      <div class="profile-class">শিক্ষার্থী — তৌফিক প্রাইভেট সেন্টার</div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid" id="profileStats">
+      <div class="stat-card">
+        <div class="stat-value" id="statTotal">—</div>
+        <div class="stat-label">মোট পরীক্ষা</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statAvg" style="color:var(--accent2);">—</div>
+        <div class="stat-label">গড় নম্বর</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statBest" style="color:var(--accent3);">—</div>
+        <div class="stat-label">সর্বোচ্চ</div>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="section-title">📋 পরীক্ষার ইতিহাস</div>
+    <div id="historyList">
+      <div class="spinner"></div>
+    </div>
+
+    <div class="divider"></div>
+    <button class="btn btn-danger btn-sm" onclick="doLogout()" style="margin-top:4px;">
+      🚪 লগআউট
+    </button>
+  </div>
+
+  <!-- ======= PAGE: NOTICE ======= -->
+  <div id="pageNotice" class="page">
+    <div class="section-title" style="margin-bottom:16px;">🔔 নোটিশ বোর্ড</div>
+    <div id="noticeList">
+      <div class="spinner"></div>
+    </div>
+  </div>
+
+  <!-- ======= PAGE: MESSAGE ======= -->
+  <div id="pageMsg" class="page">
+    <div class="section-title" style="margin-bottom:4px;">✉️ শিক্ষকের কাছে বার্তা</div>
+    <div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:16px;font-family:'Noto Sans Bengali',sans-serif;">
+      যেকোনো সমস্যা বা প্রশ্ন শিক্ষককে জানাও
+    </div>
+
+    <div id="msgLoginRequired" style="display:none;" class="card" style="text-align:center;">
+      <div style="text-align:center;padding:16px 0;">
+        <div style="font-size:2rem;margin-bottom:10px;">🔐</div>
+        <div style="font-family:'Noto Sans Bengali',sans-serif;font-size:0.9rem;color:var(--text-muted);margin-bottom:16px;">বার্তা পাঠাতে আগে লগইন করো</div>
+        <button class="btn btn-primary btn-sm" onclick="goNav('pageLogin')">লগইন →</button>
+      </div>
+    </div>
+
+    <div id="msgForm">
+      <div class="card">
+        <div class="form-group">
+          <label class="form-label">বিষয়</label>
+          <input type="text" id="msgSubject" class="form-input" placeholder="কী বিষয়ে বার্তা? (যেমন: পরীক্ষার সময়, পাসওয়ার্ড সমস্যা...)" style="font-family:'Noto Sans Bengali',sans-serif;">
+        </div>
+        <div class="form-group">
+          <label class="form-label">বার্তা</label>
+          <textarea id="msgText" class="msg-input-area" placeholder="তোমার বার্তা এখানে লিখো..."></textarea>
+        </div>
+        <div class="msg" id="msgFeedback"></div>
+        <div style="height:12px;"></div>
+        <button class="btn btn-primary" onclick="sendMsg()">
+          📨 বার্তা পাঠাও
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- .container -->
+
+<!-- Bottom Nav -->
+<div class="bottom-nav" id="bottomNav">
+  <button class="nav-btn active" id="nav-pageHome" onclick="goNav('pageHome')">
+    <span class="nav-icon">🏠</span>হোম
+  </button>
+  <button class="nav-btn" id="nav-pageNotice" onclick="goNav('pageNotice')">
+    <span class="nav-icon">🔔</span>নোটিশ
+  </button>
+  <button class="nav-btn" id="nav-pageMsg" onclick="goNav('pageMsg')">
+    <span class="nav-icon">✉️</span>বার্তা
+  </button>
+  <button class="nav-btn" id="nav-pageProfile" onclick="goNav('pageProfile')">
+    <span class="nav-icon">👤</span>প্রোফাইল
+  </button>
+</div>
+
+<script>
+// ===== STATE =====
+let currentStudent = null; // { _id, name, password, class, ... }
+let activeExamData = null; // from Firebase activeExam collection
+let activeExamUnsubscribe = null;
+let currentPage = 'pageHome';
+
+// ===== INIT =====
+async function init() {
+  // Restore session
+  const saved = localStorage.getItem('tpc_student_session');
+  if(saved) {
+    try { currentStudent = JSON.parse(saved); } catch(e){}
+  }
+
+  // Wait for Firebase — max 5 seconds timeout
+  if(!window._fbReady) {
+    await new Promise(r => {
+      const t = setTimeout(r, 5000); // 5s timeout
+      window.addEventListener('fbReady', () => { clearTimeout(t); r(); }, {once:true});
+    });
+  }
+
+  // Load marquee
+  loadMarquee();
+
+  // Listen to active exam realtime (null-safe)
+  if(window.fbListenActiveExam) {
+    activeExamUnsubscribe = window.fbListenActiveExam(onActiveExamUpdate);
+  } else {
+    onActiveExamUpdate(null);
+  }
+
+  // Update greeting
+  updateGreeting();
+  setInterval(updateGreeting, 60000);
+
+  // Hide loading
+  document.getElementById('loadingOverlay').style.display = 'none';
+  document.getElementById('bottomNav').classList.add('visible');
+
+  // Load initial page
+  renderHomePage();
+  goNav('pageHome');
+}
+
+// ===== GREETING =====
+function updateGreeting() {
+  const now = new Date();
+  const h = now.getHours();
+  let greeting = h < 5 ? 'শুভ রাত্রি' : h < 12 ? 'শুভ সকাল' : h < 17 ? 'শুভ দুপুর' : h < 20 ? 'শুভ বিকাল' : 'শুভ সন্ধ্যা';
+  const timeStr = now.toLocaleTimeString('bn-BD', {hour:'2-digit',minute:'2-digit'});
+  document.getElementById('greetingTime').textContent = `${greeting} • ${timeStr}`;
+  if(currentStudent) {
+    document.getElementById('greetingName').textContent = currentStudent.name + ' 👋';
+    document.getElementById('greetingSub').textContent = 'তোমার পরীক্ষার আপডেট নিচে দেখো';
+  } else {
+    document.getElementById('greetingName').textContent = 'স্বাগতম! 👋';
+    document.getElementById('greetingSub').textContent = 'পরীক্ষার আপডেট দেখুন নিচে';
+  }
+}
+
+// ===== ACTIVE EXAM UPDATE (realtime) =====
+function onActiveExamUpdate(data) {
+  activeExamData = data;
+  if(currentPage === 'pageHome') renderHomePage();
+}
+
+function renderHomePage() {
+  updateGreeting();
+  // Show/hide login prompt vs quick actions
+  const qA = document.getElementById('quickActions');
+  const lP = document.getElementById('loginPrompt');
+  if(currentStudent) { qA.style.display='block'; lP.style.display='none'; }
+  else { qA.style.display='none'; lP.style.display='block'; }
+
+  // Render exam status
+  renderExamStatus();
+}
+
+let countdownInterval = null;
+function renderExamStatus() {
+  const dot = document.getElementById('statusDot');
+  const label = document.getElementById('statusLabel');
+  const body = document.getElementById('examStatusBody');
+
+  if(!activeExamData || !activeExamData.examLink) {
+    // No exam
+    dot.className = 'status-dot';
+    label.textContent = 'কোনো পরীক্ষা নেই';
+    body.innerHTML = `
+      <div class="no-exam-icon">📚</div>
+      <div class="no-exam-title">আজ কোনো পরীক্ষা নেই</div>
+      <div class="no-exam-sub" style="margin-top:6px;">পরীক্ষার সময় শিক্ষক জানাবেন</div>
+    `;
+    clearInterval(countdownInterval);
+    return;
+  }
+
+  const exam = activeExamData;
+
+  // Check scheduled time
+  if(exam.scheduledAt) {
+    const schedTime = new Date(exam.scheduledAt).getTime();
+    const now = Date.now();
+    if(schedTime > now) {
+      // Upcoming
+      dot.className = 'status-dot waiting';
+      label.textContent = 'পরীক্ষা আসছে...';
+      renderCountdown(exam, body, schedTime);
+      return;
+    }
+  }
+
+  // Exam is active
+  dot.className = 'status-dot active';
+  label.textContent = 'পরীক্ষা চলছে!';
+  clearInterval(countdownInterval);
+
+  const qCount = exam.questionCount || '—';
+  const marks = exam.totalMarks || '—';
+  const duration = exam.duration || '—';
+  const passMark = exam.passMark || '—';
+
+  body.innerHTML = `
+    <div class="exam-badge">✅ পরীক্ষা সক্রিয়</div>
+    <div class="exam-title">${exam.examTitle || 'MCQ পরীক্ষা'}</div>
+    <div class="exam-meta">
+      ${exam.subject ? `<div class="exam-meta-item">📖 <strong>${exam.subject}</strong></div>` : ''}
+      ${qCount !== '—' ? `<div class="exam-meta-item">❓ <strong>${qCount}টি</strong> প্রশ্ন</div>` : ''}
+      ${marks !== '—' ? `<div class="exam-meta-item">📊 <strong>${marks}</strong> নম্বর</div>` : ''}
+      ${duration !== '—' ? `<div class="exam-meta-item">⏱️ <strong>${duration}</strong> মিনিট</div>` : ''}
+    </div>
+    <button class="btn-exam" onclick="onExamBtnClick()">
+      <div class="btn-exam-shimmer"></div>
+      <span class="btn-exam-icon">🎯</span>
+      <span>পরীক্ষা দিন</span>
+    </button>
+  `;
+}
+
+function renderCountdown(exam, body, schedTime) {
+  clearInterval(countdownInterval);
+
+  const qCount = exam.questionCount || '—';
+  const marks = exam.totalMarks || '—';
+  const duration = exam.duration || '—';
+
+  function update() {
+    const diff = schedTime - Date.now();
+    if(diff <= 0) {
+      clearInterval(countdownInterval);
+      renderExamStatus();
+      return;
+    }
+    const h = Math.floor(diff/3600000);
+    const m = Math.floor((diff%3600000)/60000);
+    const s = Math.floor((diff%60000)/1000);
+    const pad = n => String(n).padStart(2,'0');
+    const timeStr = h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+    const el = document.getElementById('countdownTimerEl');
+    if(el) el.textContent = timeStr;
+  }
+
+  body.innerHTML = `
+    <div class="exam-title" style="margin-bottom:12px;">${exam.examTitle || 'MCQ পরীক্ষা'}</div>
+    <div class="countdown-box">
+      <div class="countdown-label">⏰ পরীক্ষা শুরুর বাকি</div>
+      <div class="countdown-timer" id="countdownTimerEl">--:--</div>
+    </div>
+    <div class="exam-meta">
+      ${qCount !== '—' ? `<div class="exam-meta-item">❓ <strong>${qCount}টি</strong> প্রশ্ন</div>` : ''}
+      ${marks !== '—' ? `<div class="exam-meta-item">📊 <strong>${marks}</strong> নম্বর</div>` : ''}
+      ${duration !== '—' ? `<div class="exam-meta-item">⏱️ <strong>${duration}</strong> মিনিট</div>` : ''}
+    </div>
+    <div style="font-size:0.8rem;color:var(--text-muted);margin-top:8px;font-family:'Noto Sans Bengali',sans-serif;">নির্ধারিত সময়ে স্বয়ংক্রিয়ভাবে শুরু হবে</div>
+  `;
+  update();
+  countdownInterval = setInterval(update, 1000);
+}
+
+// ===== EXAM BUTTON CLICK =====
+function onExamBtnClick() {
+  if(!currentStudent) {
+    // Go to login, then rules
+    showPage('pageLogin');
+    showToast('আগে লগইন করো');
+    return;
+  }
+  // Go to rules page
+  loadRulesPage();
+  showPage('pageRules');
+}
+
+function loadRulesPage() {
+  const exam = activeExamData;
+  if(!exam) return;
+  document.getElementById('rulesExamTitle').textContent = exam.examTitle || 'MCQ পরীক্ষা';
+  document.getElementById('rulesBadge').textContent = exam.subject || 'পরীক্ষা';
+  document.getElementById('ruleStudentName').textContent = currentStudent?.name || '—';
+  document.getElementById('ruleQCount').textContent = exam.questionCount || '—';
+  document.getElementById('ruleMarks').textContent = exam.totalMarks || '—';
+  document.getElementById('ruleTime').textContent = exam.duration ? exam.duration + ' মি.' : '—';
+  document.getElementById('rulePass').textContent = exam.passMark || '—';
+  document.getElementById('rulesExamSub').textContent = exam.examTitle ? `"${exam.examTitle}" পরীক্ষার নিয়ম` : 'শুরু করার আগে মনোযোগ দিয়ে পড়ো';
+}
+
+function startExam() {
+  if(!activeExamData?.examLink) {
+    showToast('পরীক্ষার লিংক পাওয়া যায়নি', 'error');
+    return;
+  }
+  // Open exam in iframe
+  const link = activeExamData.examLink;
+  const title = activeExamData.examTitle || 'পরীক্ষা';
+
+  // Pass student name + password in URL if it supports it
+  let url = link;
+  try {
+    const u = new URL(link);
+    if(currentStudent) {
+      u.searchParams.set('sname', currentStudent.name);
+      u.searchParams.set('spw', currentStudent.password);
+    }
+    url = u.toString();
+  } catch(e) { /* keep original */ }
+
+  document.getElementById('examFrameTitle').textContent = title;
+  document.getElementById('examIframe').src = url;
+  document.getElementById('examFrameWrapper').classList.add('open');
+}
+
+function closeExamFrame() {
+  if(!confirm('পরীক্ষা বন্ধ করবে? অসম্পূর্ণ উত্তর সেভ হবে না।')) return;
+  document.getElementById('examFrameWrapper').classList.remove('open');
+  document.getElementById('examIframe').src = '';
+  showPage('pageHome');
+  renderHomePage();
+}
+
+// ===== LOGIN =====
+async function doLogin() {
+  const name = document.getElementById('loginName').value.trim();
+  const pass = document.getElementById('loginPass').value.trim();
+  const msgEl = document.getElementById('loginMsg');
+  const btn = document.getElementById('loginBtn');
+
+  if(!name) { showMsg(msgEl,'নাম লিখো','error'); return; }
+  if(!pass) { showMsg(msgEl,'পাসওয়ার্ড লিখো','error'); return; }
+
+  btn.innerHTML = '<span>⏳ যাচাই করা হচ্ছে...</span>';
+  btn.disabled = true;
+  msgEl.className = 'msg';
+
+  const result = await window.fbVerifyStudent(name, pass);
+
+  btn.innerHTML = '<span>🔓 প্রবেশ করুন</span>';
+  btn.disabled = false;
+
+  if(result === undefined) {
+    showMsg(msgEl,'সংযোগ সমস্যা। আবার চেষ্টা করো।','error');
+    return;
+  }
+  if(!result) {
+    showMsg(msgEl,'নাম বা পাসওয়ার্ড ভুল হয়েছে','error');
+    return;
+  }
+
+  // Success
+  currentStudent = result;
+  localStorage.setItem('tpc_student_session', JSON.stringify(currentStudent));
+  showToast('✅ লগইন সফল হয়েছে!');
+  document.getElementById('loginName').value = '';
+  document.getElementById('loginPass').value = '';
+  renderHomePage();
+  goNav('pageHome');
+}
+
+function doLogout() {
+  if(!confirm('লগআউট করবে?')) return;
+  currentStudent = null;
+  localStorage.removeItem('tpc_student_session');
+  renderHomePage();
+  goNav('pageHome');
+  showToast('লগআউট হয়েছে');
+}
+
+function togglePassVis() {
+  const inp = document.getElementById('loginPass');
+  const btn = document.getElementById('passEyeBtn');
+  if(inp.type==='password'){ inp.type='text'; btn.textContent='🙈'; }
+  else { inp.type='password'; btn.textContent='👁️'; }
+}
+
+// ===== PROFILE =====
+async function loadProfile() {
+  if(!currentStudent) {
+    goNav('pageLogin');
+    return;
+  }
+  document.getElementById('profileName').textContent = currentStudent.name;
+  document.getElementById('profileAvatar').textContent = currentStudent.name?.[0]?.toUpperCase() || '👤';
+
+  document.getElementById('historyList').innerHTML = '<div class="spinner"></div>';
+
+  const history = await window.fbGetMyHistory(currentStudent.name);
+
+  if(!history.length) {
+    document.getElementById('historyList').innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">📋</div>
+        <div class="empty-text">এখনো কোনো পরীক্ষা দাওনি</div>
+      </div>
+    `;
+    document.getElementById('statTotal').textContent = '0';
+    document.getElementById('statAvg').textContent = '—';
+    document.getElementById('statBest').textContent = '—';
+    return;
+  }
+
+  const pcts = history.map(h => h.pct || 0);
+  const avg = Math.round(pcts.reduce((a,b)=>a+b,0)/pcts.length);
+  const best = Math.max(...pcts);
+  document.getElementById('statTotal').textContent = history.length;
+  document.getElementById('statAvg').textContent = avg + '%';
+  document.getElementById('statBest').textContent = best + '%';
+
+  document.getElementById('historyList').innerHTML = history.map(h => {
+    const pct = h.pct || 0;
+    const cls = pct>=80?'pct-good':pct>=50?'pct-mid':'pct-bad';
+    const icon = pct>=80?'🏆':pct>=50?'📗':'📕';
+    const date = h.savedAt?.seconds ? new Date(h.savedAt.seconds*1000).toLocaleDateString('bn-BD') : '—';
+    return `
+      <div class="history-item">
+        <div class="history-icon">${icon}</div>
+        <div class="history-info">
+          <div class="history-exam-name">${h.examTitle || 'পরীক্ষা'}</div>
+          <div class="history-date">${date}</div>
+        </div>
+        <div class="history-score">
+          <div class="history-pct ${cls}">${pct}%</div>
+          <div class="history-grade">${h.score||'—'}/${h.total||'—'}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ===== NOTICES =====
+async function loadNotices() {
+  document.getElementById('noticeList').innerHTML = '<div class="spinner"></div>';
+  const notices = await window.fbGetActiveNotices();
+  if(!notices.length) {
+    document.getElementById('noticeList').innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">🔔</div>
+        <div class="empty-text">এখনো কোনো নোটিশ নেই</div>
+      </div>
+    `;
+    return;
+  }
+  document.getElementById('noticeList').innerHTML = notices.map(n => {
+    const date = n.createdAt?.seconds ? new Date(n.createdAt.seconds*1000).toLocaleDateString('bn-BD', {day:'numeric',month:'long',year:'numeric'}) : '';
+    return `
+      <div class="notice-card ${n.pinned?'pinned':''}">
+        <div class="notice-date">${date}</div>
+        <div class="notice-text">${n.text||n.message||'—'}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ===== MESSAGE =====
+async function sendMsg() {
+  if(!currentStudent) { showToast('আগে লগইন করো'); return; }
+  const subject = document.getElementById('msgSubject').value.trim();
+  const text = document.getElementById('msgText').value.trim();
+  const fb = document.getElementById('msgFeedback');
+  if(!text) { showMsg(fb,'বার্তা লিখতে হবে','error'); return; }
+
+  const ok = await window.fbSendMessage({
+    studentName: currentStudent.name,
+    subject: subject || 'সাধারণ বার্তা',
+    message: text,
+    studentId: currentStudent._id
+  });
+
+  if(ok) {
+    showMsg(fb,'✅ বার্তা পাঠানো হয়েছে!','success');
+    document.getElementById('msgSubject').value = '';
+    document.getElementById('msgText').value = '';
+  } else {
+    showMsg(fb,'❌ বার্তা পাঠানো যায়নি। আবার চেষ্টা করো।','error');
+  }
+}
+
+// ===== MARQUEE =====
+async function loadMarquee() {
+  const ms = await window.fbGetMarquee();
+  if(ms && ms.enabled && ms.text) {
+    document.getElementById('marqueeText').textContent = ms.text;
+    document.getElementById('marqueeText2').textContent = ms.text;
+    document.getElementById('marqueeBar').style.display = 'flex';
+  }
+}
+
+// ===== NAVIGATION =====
+function goNav(pageId) {
+  if(pageId === 'pageProfile' && !currentStudent) {
+    showPage('pageLogin');
+    updateNavActive('pageLogin');
+    return;
+  }
+  if(pageId === 'pageProfile') loadProfile();
+  if(pageId === 'pageNotice') loadNotices();
+  if(pageId === 'pageMsg') {
+    const lR = document.getElementById('msgLoginRequired');
+    const mF = document.getElementById('msgForm');
+    if(currentStudent) { lR.style.display='none'; mF.style.display='block'; }
+    else { lR.style.display='block'; mF.style.display='none'; }
+  }
+  showPage(pageId);
+  updateNavActive(pageId);
+}
+
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const el = document.getElementById(id);
+  if(el) el.classList.add('active');
+  currentPage = id;
+  window.scrollTo(0,0);
+}
+
+function updateNavActive(id) {
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById('nav-' + id);
+  if(btn) btn.classList.add('active');
+}
+
+// ===== UTILITIES =====
+function showMsg(el, text, type) {
+  el.textContent = text;
+  el.className = 'msg ' + type + ' show';
+}
+
+let toastTimer;
+function showToast(msg, type='') {
+  const el = document.getElementById('toastEl');
+  el.textContent = msg;
+  el.className = 'show';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = ''; }, 2800);
+}
+
+// ===== START =====
+window.addEventListener('load', init);
+</script>
+</body>
+</html>
